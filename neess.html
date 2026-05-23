@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>磁场可视化模拟器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        secondary: '#8b5cf6',
+                        dark: '#0f172a',
+                        magnetN: '#ef4444',
+                        magnetS: '#3b82f6',
+                    },
+                    fontFamily: {
+                        inter: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .glass-panel {
+                @apply bg-white/10 backdrop-blur-md border border-white/20 rounded-xl shadow-xl;
+            }
+            .control-slider {
+                @apply w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary;
+            }
+            .btn-action {
+                @apply px-4 py-2 bg-primary hover:bg-primary/90 rounded-lg font-medium transition-all duration-300 hover:shadow-lg;
+            }
+        }
+    </style>
+    <style>
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background-color: #0f172a;
+            background-image: radial-gradient(circle at 20% 30%, rgba(59, 130, 246, 0.08) 0%, rgba(139, 92, 246, 0.08) 100%);
+        }
+        #canvas {
+            display: block;
+            background-color: #0f172a;
+            cursor: crosshair;
+        }
+        .particle {
+            will-change: transform;
+        }
+    </style>
+</head>
+<body class="text-white min-h-screen p-4 md:p-8">
+    <div class="max-w-7xl mx-auto">
+        <!-- 标题区域 -->
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent mb-3">
+                磁场可视化模拟器
+            </h1>
+            <p class="text-gray-400 text-lg">动态粒子展示磁感线分布与方向</p>
+        </header>
+
+        <!-- 控制面板 -->
+        <div class="glass-panel p-6 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- 磁场类型选择 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">磁场源类型</label>
+                    <select id="fieldType" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-primary">
+                        <option value="bar">条形磁铁</option>
+                        <option value="current">通电直导线</option>
+                        <option value="horseshoe">U型磁铁</option>
+                        <option value="solenoid">通电螺线管</option>
+                    </select>
+                </div>
+                <!-- 粒子数量调节 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">粒子数量</label>
+                    <input type="range" id="particleCount" min="50" max="500" value="200" class="control-slider">
+                    <div class="flex justify-between text-xs text-gray-400 mt-1">
+                        <span>50</span>
+                        <span id="particleCountValue">200</span>
+                        <span>500</span>
+                    </div>
+                </div>
+                <!-- 重置按钮 -->
+                <div class="flex items-end">
+                    <button id="resetBtn" class="btn-action w-full">重置画布</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 画布区域 -->
+        <div class="glass-panel overflow-hidden mb-6">
+            <canvas id="canvas"></canvas>
+        </div>
+
+        <!-- 使用说明 -->
+        <div class="glass-panel p-6">
+            <h3 class="text-xl font-semibold mb-3 text-primary">使用指南</h3>
+            <ul class="text-gray-300 space-y-2">
+                <li>• 通过下拉菜单选择不同磁场源，观察磁感线分布差异</li>
+                <li>• 拖动滑块调节粒子数量，粒子越多磁场细节展示越丰富</li>
+                <li>• 粒子颜色：红色代表靠近N极，蓝色代表靠近S极</li>
+                <li>• 通电直导线：粒子沿环形轨迹运动，展示环形磁场特性</li>
+                <li>• 通电螺线管：内部粒子沿直线运动，模拟匀强磁场效果</li>
+                <li>• 点击重置按钮可清空画布并重新生成磁场效果</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // DOM元素获取
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const fieldTypeSelect = document.getElementById('fieldType');
+        const particleCountSlider = document.getElementById('particleCount');
+        const particleCountValue = document.getElementById('particleCountValue');
+        const resetBtn = document.getElementById('resetBtn');
+
+        // 全局变量
+        let particles = [];
+        let animationId = null;
+        let centerX, centerY;
+
+        // 画布尺寸适配
+        function resizeCanvas() {
+            const container = canvas.parentElement;
+            canvas.width = container.clientWidth;
+            canvas.height = Math.max(450, container.clientWidth * 0.6);
+            centerX = canvas.width / 2;
+            centerY = canvas.height / 2;
+            initParticles();
+            drawField();
+        }
+
+        // 滑块值更新
+        particleCountSlider.addEventListener('input', () => {
+            particleCountValue.textContent = particleCountSlider.value;
+            initParticles();
+        });
+
+        // 重置按钮事件
+        resetBtn.addEventListener('click', () => {
+            initParticles();
+            drawField();
+        });
+
+        // 磁场类型切换事件
+        fieldTypeSelect.addEventListener('change', () => {
+            initParticles();
+            drawField();
+        });
+
+        // 磁场向量计算核心函数
+        function getField(x, y) {
+            const relX = (x - centerX) / 100;
+            const relY = (y - centerY) / 100;
+            const r = Math.hypot(relX, relY);
+            const type = fieldTypeSelect.value;
+
+            switch(type) {
+                // 条形磁铁磁场
+                case 'bar':
+                    const barLength = 2;
+                    const dxN = relX + barLength/2;
+                    const dyN = relY;
+                    const rN = Math.hypot(dxN, dyN);
+                    const dxS = relX - barLength/2;
+                    const dyS = relY;
+                    const rS = Math.hypot(dxS, dyS);
+                    return {
+                        x: dxN/(rN**3) - dxS/(rS**3),
+                        y: dyN/(rN**3) - dyS/(rS**3)
+                    };
+                
+                // 通电直导线环形磁场
+                case 'current':
+                    return {
+                        x: -relY/(r**2),
+                        y: relX/(r**2)
+                    };
+                
+                // U型磁铁磁场
+                case 'horseshoe':
+                    const uRadius = 1;
+                    const uWidth = 0.3;
+                    const dxU1 = relX + uRadius;
+                    const dyU1 = relY + uWidth;
+                    const rU1 = Math.hypot(dxU1, dyU1);
+                    const dxU2 = relX + uRadius;
+                    const dyU2 = relY - uWidth;
+                    const rU2 = Math.hypot(dxU2, dyU2);
+                    return {
+                        x: dxU1/(rU1**3) - dxU2/(rU2**3),
+                        y: dyU1/(rU1**3) - dyU2/(rU2**3)
+                    };
+                
+                // 通电螺线管磁场
+                case 'solenoid':
+                    const solenoidLength = 2;
+                    const solenoidRadius = 0.5;
+                    const sr = Math.hypot(relX, relY);
+                    const inside = Math.abs(relX) < solenoidLength/2 && sr < solenoidRadius;
+                    
+                    if(inside) {
+                        return {x: 1, y: 0};
+                    } else {
+                        const dxN = relX + solenoidLength/2;
+                        const dyN = relY;
+                        const rN = Math.hypot(dxN, dyN);
+                        const dxS = relX - solenoidLength/2;
+                        const dyS = relY;
+                        const rS = Math.hypot(dxS, dyS);
+                        return {
+                            x: dxN/(rN**3) - dxS/(rS**3),
+                            y: dyN/(rN**3) - dyS/(rS**3)
+                        };
+                    }
+                
+                default:
+                    return {x: 0, y: 0};
+            }
+        }
+
+        // 初始化粒子系统
+        function initParticles() {
+            particles = [];
+            const count = parseInt(particleCountSlider.value);
+            for(let i = 0; i < count; i++) {
+                particles.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    size: Math.random() * 2 + 1,
+                    speed: Math.random() * 0.5 + 0.2
+                });
+            }
+        }
+
+        // 更新粒子位置
+        function updateParticles() {
+            particles.forEach(particle => {
+                const field = getField(particle.x, particle.y);
+                const magnitude = Math.hypot(field.x, field.y);
+                
+                if(magnitude > 0.001) {
+                    particle.x += field.x / magnitude * particle.speed;
+                    particle.y += field.y / magnitude * particle.speed;
+                } else {
+                    particle.x = Math.random() * canvas.width;
+                    particle.y = Math.random() * canvas.height;
+                }
+
+                // 边界重置
+                if(particle.x < 0 || particle.x > canvas.width || particle.y < 0 || particle.y > canvas.height) {
+                    particle.x = Math.random() * canvas.width;
+                    particle.y = Math.random() * canvas.height;
+                }
+            });
+        }
+
+        // 绘制粒子
+        function drawParticles() {
+            particles.forEach(particle => {
+                const field = getField(particle.x, particle.y);
+                const magnitude = Math.hypot(field.x, field.y);
+                const hue = magnitude > 0.1 ? 0 : 210;
+                const alpha = Math.min(magnitude * 10, 1);
+                ctx.fillStyle = `hsla(${hue}, 100%, 50%, ${alpha})`;
+                ctx.beginPath();
+                ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        // 绘制磁感线
+        function drawFieldLines() {
+            const density = 20;
+            const stepX = canvas.width / (density + 1);
+            const stepY = canvas.height / (density + 1);
+
+            ctx.strokeStyle = 'rgba(59, 130, 246, 0.2)';
+            ctx.lineWidth = 1;
+
+            for(let i = 1; i <= density; i++) {
+                for(let j = 1; j <= density; j++) {
+                    let x = i * stepX;
+                    let y = j * stepY;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y);
+
+                    for(let k = 0; k < 100; k++) {
+                        const field = getField(x, y);
+                        const magnitude = Math.hypot(field.x, field.y);
+                        if(magnitude < 0.01) break;
+                        
+                        const step = 3;
+                        x += field.x / magnitude * step;
+                        y += field.y / magnitude * step;
+
+                        if(x < 0 || x > canvas.width || y < 0 || y > canvas.height) break;
+                        ctx.lineTo(x, y);
+                    }
+                    ctx.stroke();
+                }
+            }
+        }
+
+        // 绘制磁场源图标
+        function drawFieldSource() {
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+
+            switch(fieldTypeSelect.value) {
+                case 'bar':
+                    ctx.fillStyle = '#ef4444';
+                    ctx.fillRect(centerX - 100, centerY - 25, 100, 50);
+                    ctx.strokeRect(centerX - 100, centerY - 25, 100, 50);
+                    ctx.fillStyle = '#3b82f6';
+                    ctx.fillRect(centerX, centerY - 25, 100, 50);
+                    ctx.strokeRect(centerX, centerY - 25, 100, 50);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 20px Arial';
+                    ctx.fillText('N', centerX - 50, centerY + 8);
+                    ctx.fillText('S', centerX + 50, centerY + 8);
+                    break;
+                
+                case 'current':
+                    ctx.fillStyle = '#6b7280';
+                    ctx.fillRect(centerX - 5, 0, 10, canvas.height);
+                    ctx.strokeRect(centerX - 5, 0, 10, canvas.height);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 20px Arial';
+                    ctx.fillText('↑', centerX, centerY);
+                    break;
+                
+                case 'horseshoe':
+                    ctx.beginPath();
+                    ctx.arc(centerX - 100, centerY, 50, Math.PI/2, 3*Math.PI/2);
+                    ctx.lineTo(centerX - 100, centerY - 50);
+                    ctx.lineTo(centerX - 200, centerY - 50);
+                    ctx.lineTo(centerX - 200, centerY + 50);
+                    ctx.lineTo(centerX - 100, centerY + 50);
+                    ctx.closePath();
+                    ctx.fillStyle = '#ef4444';
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillText('N', centerX - 180, centerY - 20);
+                    ctx.fillText('S', centerX - 180, centerY + 30);
+                    break;
+                
+                case 'solenoid':
+                    ctx.strokeStyle = '#6b7280';
+                    ctx.lineWidth = 3;
+                    for(let i = -5; i <= 5; i++) {
+                        ctx.beginPath();
+                        ctx.arc(centerX + i*20, centerY, 50, 0, Math.PI);
+                        ctx.stroke();
+                    }
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 16px Arial';
+                    ctx.fillText('→', centerX - 110, centerY + 60);
+                    ctx.fillText('←', centerX + 110, centerY - 60);
+                    break;
+            }
+        }
+
+        // 绘制磁场背景
+        function drawField() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawFieldLines();
+            drawFieldSource();
+        }
+
+        // 动画循环
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawFieldLines();
+            drawFieldSource();
+            updateParticles();
+            drawParticles();
+            animationId = requestAnimationFrame(animate);
+        }
+
+        // 初始化程序
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        animate();
+    </script>
+</body>
+</html>
