@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>磁场可视化模拟器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        secondary: '#8b5cf6',
+                        dark: '#1e293b',
+                    },
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .canvas-container {
+                @apply relative bg-dark rounded-lg overflow-hidden shadow-2xl;
+            }
+            .control-btn {
+                @apply px-4 py-2 rounded-lg font-medium transition-all duration-300 hover:shadow-lg;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen p-4 md:p-8">
+    <div class="max-w-7xl mx-auto">
+        <!-- 标题区域 -->
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent mb-2">
+                磁场可视化模拟器
+            </h1>
+            <p class="text-gray-400">实时模拟不同磁场源的磁感线分布</p>
+        </header>
+
+        <!-- 控制面板 -->
+        <div class="bg-gray-800 rounded-xl p-6 mb-6 shadow-xl">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">磁场源类型</label>
+                    <select id="fieldType" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-primary">
+                        <option value="bar">条形磁铁</option>
+                        <option value="horseshoe">U形磁铁</option>
+                        <option value="current">通电直导线</option>
+                        <option value="solenoid">通电螺线管</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">磁感线数量</label>
+                    <input type="range" id="lineCount" min="10" max="100" value="30" 
+                           class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary">
+                    <div class="flex justify-between text-xs text-gray-400 mt-1">
+                        <span>10</span>
+                        <span id="lineCountValue">30</span>
+                        <span>100</span>
+                    </div>
+                </div>
+                <div class="flex items-end">
+                    <button id="resetBtn" class="control-btn bg-primary hover:bg-primary/90 w-full">
+                        重置画布
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 画布区域 -->
+        <div class="canvas-container">
+            <canvas id="canvas" class="w-full"></canvas>
+        </div>
+
+        <!-- 说明区域 -->
+        <div class="mt-6 bg-gray-800 rounded-xl p-6 shadow-xl">
+            <h3 class="text-xl font-semibold mb-3">使用说明</h3>
+            <ul class="text-gray-300 space-y-2">
+                <li>• 选择不同磁场源类型，查看对应的磁感线分布</li>
+                <li>• 拖动滑块调整磁感线的数量，观察细节变化</li>
+                <li>• 点击重置按钮可以清空画布重新绘制</li>
+                <li>• 磁感线方向：红色代表N极，蓝色代表S极</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // 获取DOM元素
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const fieldTypeSelect = document.getElementById('fieldType');
+        const lineCountSlider = document.getElementById('lineCount');
+        const lineCountValue = document.getElementById('lineCountValue');
+        const resetBtn = document.getElementById('resetBtn');
+
+        // 设置画布尺寸
+        function resizeCanvas() {
+            const container = canvas.parentElement;
+            canvas.width = container.clientWidth;
+            canvas.height = Math.max(400, container.clientWidth * 0.6);
+            drawField();
+        }
+
+        // 更新滑块显示值
+        lineCountSlider.addEventListener('input', () => {
+            lineCountValue.textContent = lineCountSlider.value;
+            drawField();
+        });
+
+        // 重置按钮
+        resetBtn.addEventListener('click', drawField);
+
+        // 磁场类型切换
+        fieldTypeSelect.addEventListener('change', drawField);
+
+        // 计算磁场向量
+        function getField(x, y) {
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const relX = (x - centerX) / 100;
+            const relY = (y - centerY) / 100;
+            const r = Math.hypot(relX, relY);
+            const type = fieldTypeSelect.value;
+
+            switch(type) {
+                // 条形磁铁
+                case 'bar':
+                    const barLength = 2;
+                    const barWidth = 0.5;
+                    const dx1 = relX + barLength/2;
+                    const dy1 = relY;
+                    const r1 = Math.hypot(dx1, dy1);
+                    const dx2 = relX - barLength/2;
+                    const dy2 = relY;
+                    const r2 = Math.hypot(dx2, dy2);
+                    return {
+                        x: dx1/(r1**3) - dx2/(r2**3),
+                        y: dy1/(r1**3) - dy2/(r2**3)
+                    };
+                
+                // U形磁铁
+                case 'horseshoe':
+                    const uRadius = 1;
+                    const uWidth = 0.3;
+                    const dxN = relX + uRadius;
+                    const dyN = relY - uWidth;
+                    const rN = Math.hypot(dxN, dyN);
+                    const dxS = relX + uRadius;
+                    const dyS = relY + uWidth;
+                    const rS = Math.hypot(dxS, dyS);
+                    return {
+                        x: dxN/(rN**3) - dxS/(rS**3) + relX/(r**3)*0.5,
+                        y: dyN/(rN**3) - dyS/(rS**3) + relY/(r**3)*0.5
+                    };
+                
+                // 通电直导线
+                case 'current':
+                    return {
+                        x: -relY/(r**2),
+                        y: relX/(r**2)
+                    };
+                
+                // 通电螺线管
+                case 'solenoid':
+                    const solenoidLength = 2;
+                    const solenoidRadius = 0.5;
+                    const sdx = relX;
+                    const sdy = relY;
+                    const sr = Math.hypot(sdx, sdy);
+                    const angle = Math.atan2(sdy, sdx);
+                    const inside = Math.abs(relX) < solenoidLength/2 && sr < solenoidRadius;
+                    return inside ? {
+                        x: 1,
+                        y: 0
+                    } : {
+                        x: Math.cos(angle)*(1/(sr**2)),
+                        y: Math.sin(angle)*(1/(sr**2))
+                    };
+                
+                default:
+                    return {x: 0, y: 0};
+            }
+        }
+
+        // 绘制磁感线
+        function drawFieldLine(startX, startY) {
+            let x = startX;
+            let y = startY;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+
+            for(let i = 0; i < 200; i++) {
+                const field = getField(x, y);
+                const magnitude = Math.hypot(field.x, field.y);
+                
+                if(magnitude < 0.01) break;
+                
+                const step = 2;
+                x += field.x / magnitude * step;
+                y += field.y / magnitude * step;
+
+                if(x < 0 || x > canvas.width || y < 0 || y > canvas.height) break;
+                
+                ctx.lineTo(x, y);
+            }
+
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        // 绘制磁场源
+        function drawFieldSource() {
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const type = fieldTypeSelect.value;
+
+            ctx.fillStyle = '#ef4444';
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+
+            switch(type) {
+                case 'bar':
+                    // N极
+                    ctx.fillRect(centerX - 100, centerY - 25, 100, 50);
+                    ctx.strokeRect(centerX - 100, centerY - 25, 100, 50);
+                    // S极
+                    ctx.fillStyle = '#3b82f6';
+                    ctx.fillRect(centerX, centerY - 25, 100, 50);
+                    ctx.strokeRect(centerX, centerY - 25, 100, 50);
+                    // 标记
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 20px Arial';
+                    ctx.fillText('N', centerX - 50, centerY + 8);
+                    ctx.fillText('S', centerX + 50, centerY + 8);
+                    break;
+                
+                case 'horseshoe':
+                    ctx.beginPath();
+                    ctx.arc(centerX - 100, centerY, 50, Math.PI/2, 3*Math.PI/2);
+                    ctx.lineTo(centerX - 100, centerY - 50);
+                    ctx.lineTo(centerX - 200, centerY - 50);
+                    ctx.lineTo(centerX - 200, centerY + 50);
+                    ctx.lineTo(centerX - 100, centerY + 50);
+                    ctx.closePath();
+                    ctx.fillStyle = '#ef4444';
+                    ctx.fill();
+                    ctx.stroke();
+                    // 标记
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillText('N', centerX - 180, centerY - 20);
+                    ctx.fillText('S', centerX - 180, centerY + 30);
+                    break;
+                
+                case 'current':
+                    ctx.fillStyle = '#6b7280';
+                    ctx.fillRect(centerX - 5, 0, 10, canvas.height);
+                    ctx.strokeRect(centerX - 5, 0, 10, canvas.height);
+                    // 电流方向标记
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 20px Arial';
+                    ctx.fillText('↑', centerX, centerY);
+                    break;
+                
+                case 'solenoid':
+                    ctx.strokeStyle = '#6b7280';
+                    ctx.lineWidth = 3;
+                    for(let i = -5; i <= 5; i++) {
+                        ctx.beginPath();
+                        ctx.arc(centerX + i*20, centerY, 50, 0, Math.PI);
+                        ctx.stroke();
+                    }
+                    // 电流方向
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 16px Arial';
+                    ctx.fillText('→', centerX - 110, centerY + 60);
+                    ctx.fillText('←', centerX + 110, centerY - 60);
+                    break;
+            }
+        }
+
+        // 绘制整个磁场
+        function drawField() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // 绘制磁场源
+            drawFieldSource();
+            
+            // 绘制磁感线
+            const count = parseInt(lineCountSlider.value);
+            const stepX = canvas.width / (count + 1);
+            const stepY = canvas.height / (count + 1);
+
+            for(let i = 1; i <= count; i++) {
+                for(let j = 1; j <= count; j++) {
+                    drawFieldLine(i * stepX, j * stepY);
+                }
+            }
+        }
+
+        // 初始化
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+    </script>
+</body>
+</html>
+
+
