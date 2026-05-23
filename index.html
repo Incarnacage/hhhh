@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>磁场可视化工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+        }
+        .canvas-container {
+            position: relative;
+            width: 100%;
+            height: 80vh;
+        }
+        #magnetCanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        .control-panel {
+            backdrop-filter: blur(10px);
+            background-color: rgba(255, 255, 255, 0.9);
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-6">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">磁场可视化工具</h1>
+        
+        <div class="canvas-container rounded-lg shadow-lg overflow-hidden mb-6">
+            <!-- P5.js 画布将自动插入这里 -->
+        </div>
+
+        <div class="control-panel rounded-lg shadow-md p-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">磁场源类型</label>
+                    <select id="fieldType" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="bar">条形磁铁</option>
+                        <option value="loop">电流环</option>
+                        <option value="solenoid">螺线管</option>
+                        <option value="earth">地磁场</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">磁场强度</label>
+                    <input type="range" id="fieldStrength" min="0.1" max="5" step="0.1" value="1" 
+                           class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                    <div class="text-xs text-gray-500 text-right mt-1">当前值: <span id="strengthValue">1.0</span></div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">粒子数量</label>
+                    <input type="range" id="particleCount" min="50" max="500" step="10" value="200" 
+                           class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                    <div class="text-xs text-gray-500 text-right mt-1">当前值: <span id="particleValue">200</span></div>
+                </div>
+
+                <div class="flex items-end">
+                    <button id="resetBtn" class="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded-md transition-colors">
+                        重置视图
+                    </button>
+                </div>
+            </div>
+
+            <div class="mt-6 p-4 bg-blue-50 rounded-md">
+                <h3 class="font-medium text-blue-800 mb-2">操作说明</h3>
+                <ul class="text-sm text-gray-600 space-y-1">
+                    <li>• 鼠标拖拽可移动磁场源</li>
+                    <li>• 滚轮缩放视图</li>
+                    <li>• 点击磁场源可切换磁极方向</li>
+                    <li>• 调整参数实时查看磁场变化</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let fieldType = 'bar';
+        let fieldStrength = 1.0;
+        let particleCount = 200;
+        let particles = [];
+        let magnet = { x: 0, y: 0, length: 150, pole: 1 };
+        let solenoid = { x: 0, y: 0, length: 200, turns: 10 };
+        let isDragging = false;
+        let dragOffset = { x: 0, y: 0 };
+        let zoom = 1.0;
+        let offset = { x: 0, y: 0 };
+
+        function setup() {
+            const canvasContainer = document.querySelector('.canvas-container');
+            const canvas = createCanvas(canvasContainer.clientWidth, canvasContainer.clientHeight);
+            canvas.parent('canvas-container');
+            
+            initParticles();
+            setupEventListeners();
+        }
+
+        function initParticles() {
+            particles = [];
+            for (let i = 0; i < particleCount; i++) {
+                particles.push({
+                    x: random(width),
+                    y: random(height),
+                    history: []
+                });
+            }
+        }
+
+        function draw() {
+            background(245, 245, 245);
+            
+            push();
+            translate(width/2 + offset.x, height/2 + offset.y);
+            scale(zoom);
+            
+            drawField();
+            drawParticles();
+            drawSource();
+            
+            pop();
+        }
+
+        function drawField() {
+            const gridSize = 30;
+            const cols = Math.floor(width / gridSize / zoom) + 2;
+            const rows = Math.floor(height / gridSize / zoom) + 2;
+            
+            for (let i = -cols/2; i < cols/2; i++) {
+                for (let j = -rows/2; j < rows/2; j++) {
+                    const x = i * gridSize;
+                    const y = j * gridSize;
+                    
+                    let field = createVector(0, 0);
+                    if (fieldType === 'bar') {
+                        field = barMagnetField(x - magnet.x, y - magnet.y);
+                    } else if (fieldType === 'loop') {
+                        field = currentLoopField(x - magnet.x, y - magnet.y);
+                    } else if (fieldType === 'solenoid') {
+                        field = solenoidField(x - solenoid.x, y - solenoid.y);
+                    } else if (fieldType === 'earth') {
+                        field = earthField(x, y);
+                    }
+                    
+                    field.mult(fieldStrength);
+                    
+                    const len = constrain(field.mag(), 5, 20);
+                    field.setMag(len);
+                    
+                    stroke(50, 150, 250, 100);
+                    line(x, y, x + field.x, y + field.y);
+                    drawArrow(createVector(x, y), field, '#3b82f6');
+                }
+            }
+        }
+
+        function drawParticles() {
+            for (let p of particles) {
+                const worldX = (p.x - width/2 - offset.x) / zoom;
+                const worldY = (p.y - height/2 - offset.y) / zoom;
+                
+                let field = createVector(0, 0);
+                if (fieldType === 'bar') {
+                    field = barMagnetField(worldX - magnet.x, worldY - magnet.y);
+                } else if (fieldType === 'loop') {
+                    field = currentLoopField(worldX - magnet.x, worldY - magnet.y);
+                } else if (fieldType === 'solenoid') {
+                    field = solenoidField(worldX - solenoid.x, worldY - solenoid.y);
+                } else if (fieldType === 'earth') {
+                    field = earthField(worldX, worldY);
+                }
+                
+                field.mult(fieldStrength * 0.5);
+                
+                p.x += field.x;
+                p.y += field.y;
+                
+                p.history.push(createVector(p.x, p.y));
+                if (p.history.length > 20) {
+                    p.history.shift();
+                }
+                
+                noFill();
+                stroke(239, 68, 68, 150);
+                beginShape();
+                for (let pos of p.history) {
+                    vertex(pos.x, pos.y);
+                }
+                endShape();
+                
+                fill(239, 68, 68);
+                noStroke();
+                ellipse(p.x, p.y, 3, 3);
+                
+                if (p.x < 0 || p.x > width || p.y < 0 || p.y > height) {
+                    p.x = random(width);
+                    p.y = random(height);
+                    p.history = [];
+                }
+            }
+        }
+
+        function drawSource() {
+            if (fieldType === 'bar') {
+                push();
+                translate(magnet.x, magnet.y);
+                rotate(radians(90));
+                
+                fill(239, 68, 68);
+                stroke(0);
+                rectMode(CENTER);
+                rect(0, 0, 30, magnet.length, 5);
+                
+                fill(255);
+                textSize(16);
+                textAlign(CENTER, CENTER);
+                text(magnet.pole > 0 ? 'N' : 'S', 0, -magnet.length/2 + 15);
+                text(magnet.pole > 0 ? 'S' : 'N', 0, magnet.length/2 - 15);
+                
+                pop();
+            } else if (fieldType === 'loop') {
+                noFill();
+                stroke(0);
+                strokeWeight(3);
+                ellipse(magnet.x, magnet.y, 100, 100);
+                
+                fill(50, 150, 250);
+                noStroke();
+                textAlign(CENTER, CENTER);
+                textSize(14);
+                text('I', magnet.x, magnet.y);
+            } else if (fieldType === 'solenoid') {
+                noFill();
+                stroke(0);
+                strokeWeight(2);
+                
+                const coilRadius = 40;
+                const spacing = solenoid.length / solenoid.turns;
+                
+                for (let i = 0; i < solenoid.turns; i++) {
+                    const y = solenoid.y - solenoid.length/2 + i * spacing;
+                    arc(solenoid.x, y, coilRadius*2, coilRadius*2, radians(90), radians(270));
+                }
+                
+                strokeWeight(3);
+                line(solenoid.x - coilRadius, solenoid.y - solenoid.length/2, 
+                     solenoid.x - coilRadius, solenoid.y + solenoid.length/2);
+                line(solenoid.x + coilRadius, solenoid.y - solenoid.length/2, 
+                     solenoid.x + coilRadius, solenoid.y + solenoid.length/2);
+            } else if (fieldType === 'earth') {
+                noFill();
+                stroke(100, 100, 100);
+                strokeWeight(2);
+                ellipse(0, 0, 300, 300);
+                
+                fill(50, 150, 250);
+                noStroke();
+                textAlign(CENTER, CENTER);
+                textSize(16);
+                text('N', 0, -120);
+                text('S', 0, 120);
+            }
+        }
+
+        function barMagnetField(x, y) {
+            const m = magnet.length / 2;
+            const pole = magnet.pole;
+            
+            const r1 = dist(x, y, m*pole, 0);
+            const r2 = dist(x, y, -m*pole, 0);
+            
+            const Bx = (x - m*pole)/pow(r1, 3) - (x + m*pole)/pow(r2, 3);
+            const By = y/pow(r1, 3) - y/pow(r2, 3);
+            
+            return createVector(Bx, By);
+        }
+
+        function currentLoopField(x, y) {
+            const R = 50;
+            const I = 1;
+            
+            const rSquared = x*x + y*y + R*R;
+            const rCubed = pow(rSquared, 1.5);
+            
+            const Bx = (I * R * R * x) / rCubed;
+            const By = (I * R * R * y) / rCubed;
+            
+            return createVector(-By, Bx);
+        }
+
+        function solenoidField(x, y) {
+            const L = solenoid.length;
+            const N = solenoid.turns;
+            const R = 40;
+            
+            const z1 = y + L/2;
+            const z2 = y - L/2;
+            
+            const Bz = (N / L) * (z1 / sqrt(R*R + z1*z1) - z2 / sqrt(R*R + z2*z2));
+            
+            return createVector(0, Bz);
+        }
+
+        function earthField(x, y) {
+            const r = dist(x, y, 0, 0);
+            const theta = atan2(y, x);
+            
+            const Br = (2 * cos(theta)) / pow(r, 3);
+            const Btheta = (sin(theta)) / pow(r, 3);
+            
+            const Bx = Br * cos(theta) - Btheta * sin(theta);
+            const By = Br * sin(theta) + Btheta * cos(theta);
+            
+            return createVector(Bx, By);
+        }
+
+        function drawArrow(base, vec, myColor) {
+            push();
+            stroke(myColor);
+            strokeWeight(1);
+            fill(myColor);
+            translate(base.x, base.y);
+            line(0, 0, vec.x, vec.y);
+            rotate(vec.heading());
+            const arrowSize = 5;
+            translate(vec.mag() - arrowSize, 0);
+            triangle(0, arrowSize/2, 0, -arrowSize/2, arrowSize, 0);
+            pop();
+        }
+
+        function setupEventListeners() {
+            // 控制面板事件
+            document.getElementById('fieldType').addEventListener('change', (e) => {
+                fieldType = e.target.value;
+                initParticles();
+            });
+
+            document.getElementById('fieldStrength').addEventListener('input', (e) => {
+                fieldStrength = parseFloat(e.target.value);
+                document.getElementById('strengthValue').textContent = fieldStrength.toFixed(1);
+            });
+
+            document.getElementById('particleCount').addEventListener('input', (e) => {
+                particleCount = parseInt(e.target.value);
+                document.getElementById('particleValue').textContent = particleCount;
+                initParticles();
+            });
+
+            document.getElementById('resetBtn').addEventListener('click', () => {
+                zoom = 1.0;
+                offset = { x: 0, y: 0 };
+                magnet = { x: 0, y: 0, length: 150, pole: 1 };
+                solenoid = { x: 0, y: 0, length: 200, turns: 10 };
+                initParticles();
+            });
+
+            // 画布交互事件
+            canvas.addEventListener('mousedown', (e) => {
+                const mouseX = e.offsetX;
+                const mouseY = e.offsetY;
+                
+                const worldX = (mouseX - width/2 - offset.x) / zoom;
+                const worldY = (mouseY - height/2 - offset.y) / zoom;
+                
+                if (fieldType === 'bar') {
+                    if (dist(worldX, worldY, magnet.x, magnet.y) < magnet.length/2 + 20) {
+                        isDragging = true;
+                        dragOffset.x = worldX - magnet.x;
+                        dragOffset.y = worldY - magnet.y;
+                    }
+                } else if (fieldType === 'loop') {
+                    if (dist(worldX, worldY, magnet.x, magnet.y) < 60) {
+                        isDragging = true;
+                        dragOffset.x = worldX - magnet.x;
+                        dragOffset.y = worldY - magnet.y;
+                    }
+                } else if (fieldType === 'solenoid') {
+                    if (abs(worldX - solenoid.x) < 50 && abs(worldY - solenoid.y) < solenoid.length/2 + 20) {
+                        isDragging = true;
+                        dragOffset.x = worldX - solenoid.x;
+                        dragOffset.y = worldY - solenoid.y;
+                    }
+                }
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                if (isDragging) {
+                    const mouseX = e.offsetX;
+                    const mouseY = e.offsetY;
+                    
+                    const worldX = (mouseX - width/2 - offset.x) / zoom;
+                    const worldY = (mouseY - height/2 - offset.y) / zoom;
+                    
+                    if (fieldType === 'bar') {
+                        magnet.x = worldX - dragOffset.x;
+                        magnet.y = worldY - dragOffset.y;
+                    } else if (fieldType === 'loop') {
+                        magnet.x = worldX - dragOffset.x;
+                        magnet.y = worldY - dragOffset.y;
+                    } else if (fieldType === 'solenoid') {
+                        solenoid.x = worldX - dragOffset.x;
+                        solenoid.y = worldY - dragOffset.y;
+                    }
+                }
+            });
+
+            canvas.addEventListener('mouseup', () => {
+                isDragging = false;
+            });
+
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+                zoom *= zoomFactor;
+                zoom = constrain(zoom, 0.2, 5);
+            });
+
+            canvas.addEventListener('dblclick', (e) => {
+                const mouseX = e.offsetX;
+                const mouseY = e.offsetY;
+                
+                const worldX = (mouseX - width/2 - offset.x) / zoom;
+                const worldY = (mouseY - height/2 - offset.y) / zoom;
+                
+                if (fieldType === 'bar' && dist(worldX, worldY, magnet.x, magnet.y) < magnet.length/2 + 20) {
+                    magnet.pole *= -1;
+                    initParticles();
+                }
+            });
+
+            // 窗口大小调整
+            window.addEventListener('resize', () => {
+                const canvasContainer = document.querySelector('.canvas-container');
+                resizeCanvas(canvasContainer.clientWidth, canvasContainer.clientHeight);
+                initParticles();
+            });
+        }
+
+        // 启动P5.js
+        new p5();
+    </script>
+</body>
+</html>
+
+
+
+
+
